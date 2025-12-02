@@ -1,0 +1,5 @@
+{
+  "name": "Travel Summary Generator",
+  "description": "Turn your messy spreadsheet itineraries into beautiful, interactive travel summaries with cost breakdowns, daily schedules, and AI-predicted weather.",
+  "requestFramePermissions": []
+}
