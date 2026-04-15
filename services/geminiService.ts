@@ -1,134 +1,78 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { BookletData, WeatherType } from "../types";
+import { GoogleGenAI } from "@google/genai";
+import { TaxStrategy } from "../types";
+import { STATE_TAX } from "../taxData2024";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const responseSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    destination: {
-      type: Type.STRING,
-      description: "The main location or city of the trip found in cell C1 (Row 1, Column 3).",
-    },
-    totalSpend: {
-      type: Type.NUMBER,
-      description: "The total sum of expenses found in column I.",
-    },
-    spendBreakdown: {
-      type: Type.ARRAY,
-      description: "A breakdown of expenses categorized by type (e.g., Flights, Hotel, Food) derived from column I.",
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          category: { type: Type.STRING },
-          amount: { type: Type.NUMBER },
-        },
-        required: ["category", "amount"],
-      },
-    },
-    days: {
-      type: Type.ARRAY,
-      description: "The daily itinerary extracted from the sheet rows.",
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          date: { type: Type.STRING, description: "The date of this itinerary day (e.g., 'Oct 12' or 'Monday') extracted from column A." },
-          weather: {
-            type: Type.STRING,
-            enum: ["Sunny", "Rainy", "Cloudy", "Snowy"],
-            description: "A predicted or random weather condition suitable for the location and season.",
-          },
-          highlights: {
-            type: Type.ARRAY,
-            description: "A list of 3-4 distinct, engaging highlights. Includes reviews for venues.",
-            items: { type: Type.STRING }
-          },
-          events: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                time: { type: Type.STRING, description: "Time of the event found in Column D." },
-                description: { type: Type.STRING, description: "The main activity name found in Column E." },
-                location: { type: Type.STRING, description: "Specific venue or place name if mentioned in Column E." },
-              },
-              required: ["description"],
-            },
-          },
-        },
-        required: ["date", "weather", "highlights", "events"],
-      },
-    },
-  },
-  required: ["destination", "totalSpend", "spendBreakdown", "days"],
+interface NarrativeParams {
+  marginalRateLabel: string;   // e.g. "37%"
+  stateName: string;           // e.g. "California"
+  filingStatusLabel: string;   // e.g. "married filing jointly"
+  hasRsuIncome: boolean;
+  strategies: Pick<TaxStrategy, 'id' | 'title'>[];
+}
+
+const FILING_STATUS_LABELS: Record<string, string> = {
+  single: 'single filer',
+  mfj:    'married filing jointly',
+  mfs:    'married filing separately',
+  hoh:    'head of household',
 };
 
-export const parseItinerary = async (rawData: string): Promise<BookletData> => {
-  try {
-    const prompt = `
-      You are an expert travel assistant. I will provide raw text from a spreadsheet itinerary (CSV format).
-      
-      Your task is to parse this data into a structured JSON slide deck.
-      
-      SPECIFIC INSTRUCTIONS FOR THE SHEET STRUCTURE:
-      1. **Location & Title**: 
-         - The trip title/location is in **merged cell C1** (Row 1, Column 3).
-         - Example: "Thailand Trip" in the header row.
-      
-      2. **Spend Data (Columns I, J, K, L)**:
-         - **Column I** (9th col): Cost Person 1.
-         - **Column J** (10th col): Cost Category Code. Map these codes to full names:
-            - A = Airfare
-            - H = Housing
-            - F = Food
-            - S = Shopping
-            - G = Gifts
-            - T = Transportation
-            - R = Recreation
-         - **Column K** (11th col): Cost Person 2.
-         - **Column L** (12th col): Total Cost (Sum of I and K).
-         - **Logic**: 
-            - Calculate 'totalSpend' as the sum of **Column L** for all rows.
-            - Generate 'spendBreakdown' by summing **Column L** grouped by the category derived from **Column J**.
-      
-      3. **Itinerary Columns (A, D, E) & Row Grouping**:
-         - **Column A (Date)**: This indicates the start of a new day. 
-         - **IMPORTANT**: The spreadsheet uses "sparse dates". This means a date only appears in the first row of that day. 
-         - **Logic**: If Column A contains a date (e.g., "11/1/2025"), it starts a new Day object. If Column A is empty, the row belongs to the current (most recently defined) day.
-         - **Include ALL rows** between two dates as events for that day.
-         - **Ignore Empty Rows**: If a row has no data in Columns A, D, or E, ignore it entirely. Do not create empty events.
-         - **Column D**: TIME. Extract the start time from Column D.
-         - **Column E**: LOCATION/ACTIVITY. Use Column E for the event description.
-      
-      4. **Enrichment & Highlights (CRITICAL)**:
-         - **Highlights**: Generate a list of 3-4 distinct highlights for each day.
-         - **Formatting**: Ensure highlights are complete sentences and properly capitalized.
-         - **Reviews**: 
-            - For **Restaurants/Food** events: Include one highlight that reads like a **Google Review** (e.g., "Review: 'Best Pad Thai in the city, the service was quick and the ambiance electric'").
-            - For **Hotels/Resorts**: Include one highlight that reads like a **Forbes Travel Guide or Michelin Guide** snippet (e.g., "Forbes says: 'This 5-star sanctuary offers unparalleled luxury with breathtaking river views.'").
-         - **Weather**: Predict realistic weather for the location and date.
-      
-      RAW DATA:
-      ${rawData}
-    `;
+// Sanitize a string to prevent prompt injection — strips characters that could
+// alter prompt structure while preserving normal text.
+function sanitize(value: string): string {
+  return value.replace(/[`<>{}[\]]/g, '').slice(0, 100);
+}
 
+export async function generateNarratives(
+  stateCode: string,
+  marginalRateLabel: string,
+  filingStatus: string,
+  hasRsuIncome: boolean,
+  strategies: Pick<TaxStrategy, 'id' | 'title'>[],
+): Promise<Record<string, string>> {
+  const stateName = sanitize(STATE_TAX[stateCode]?.name ?? stateCode);
+  const filingStatusLabel = sanitize(FILING_STATUS_LABELS[filingStatus] ?? filingStatus);
+  const safeRateLabel = sanitize(marginalRateLabel);
+
+  // NOTE: We deliberately do NOT include raw dollar figures from user input in
+  // this prompt. Only abstracted parameters (bracket tier, state name, strategy
+  // names) are sent to the external API to protect user privacy.
+  const strategyList = strategies
+    .map(s => `- ${sanitize(s.title)} (id: ${sanitize(s.id)})`)
+    .join('\n');
+
+  const prompt = `You are a knowledgeable tax educator helping a high-income ${filingStatusLabel} in ${stateName} who is in the ${safeRateLabel} federal tax bracket${hasRsuIncome ? ' with RSU equity compensation' : ''}.
+
+For each tax strategy listed below, write a concise 2–3 sentence personalized explanation of WHY this strategy is especially valuable for someone in their situation. Use plain English, not jargon. Do NOT invent specific dollar figures or guarantee outcomes. Do NOT provide legal or tax advice — frame everything as educational information.
+
+Strategies:
+${strategyList}
+
+Respond with a JSON object where each key is the strategy id and the value is the 2–3 sentence explanation. Example format:
+{
+  "401k-optimization": "At the 37% bracket, every dollar you defer into a 401(k)...",
+  "backdoor-roth": "Since your income exceeds..."
+}`;
+
+  try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-2.0-flash',
       contents: prompt,
       config: {
-        responseMimeType: "application/json",
-        responseSchema: responseSchema,
+        responseMimeType: 'application/json',
       },
     });
 
     const text = response.text;
-    if (!text) {
-      throw new Error("No response from AI");
-    }
+    if (!text) throw new Error('No response from AI');
 
-    return JSON.parse(text) as BookletData;
-  } catch (error) {
-    console.error("Error parsing itinerary:", error);
-    throw new Error("Failed to parse itinerary. Please check your input and try again.");
+    const parsed = JSON.parse(text) as Record<string, string>;
+    return parsed;
+  } catch (err) {
+    console.error('Gemini narrative generation failed:', err);
+    // Non-fatal: return empty object so UI falls back to static descriptions
+    return {};
   }
-};
+}
