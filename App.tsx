@@ -1,13 +1,17 @@
 import React, { useState, useRef } from 'react';
 import { parseItinerary } from './services/geminiService';
 import Booklet from './components/Booklet';
+import { TaxCalculator } from './tax/TaxCalculator';
 import { BookletData, AppState } from './types';
 import { SAMPLE_DATA } from './constants';
 import { TEMPLATE_CSV, README_CONTENT } from './assets';
 import { Loader2, Wand2, FileSpreadsheet, DollarSign, Upload, FileText, X, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
+type AppMode = 'travel' | 'tax';
+
 const App: React.FC = () => {
+  const [mode, setMode] = useState<AppMode>('travel');
   const [input, setInput] = useState('');
   const [fileName, setFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -129,6 +133,30 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  if (mode === 'tax') {
+    return (
+      <>
+        <nav className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur border-b border-slate-200 flex items-center justify-center gap-1 py-2.5">
+          <button
+            onClick={() => setMode('travel')}
+            className="px-4 py-1.5 rounded-full text-sm font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-all"
+          >
+            ✈️ Travel Booklet
+          </button>
+          <button
+            onClick={() => setMode('tax')}
+            className="px-4 py-1.5 rounded-full text-sm font-medium bg-emerald-600 text-white shadow-sm"
+          >
+            🧾 Tax Calculator
+          </button>
+        </nav>
+        <div className="pt-12">
+          <TaxCalculator />
+        </div>
+      </>
+    );
+  }
+
   if (state.step === 'loading') {
     return (
       <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center p-4">
@@ -149,16 +177,27 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-stone-50 flex flex-col font-sans text-stone-900">
       
       {/* Header */}
-      <header className="bg-white border-b border-stone-200 py-6 px-6 md:px-12 flex items-center justify-between">
+      <header className="bg-white border-b border-stone-200 py-4 px-6 md:px-12 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-rose-500 rounded-lg flex items-center justify-center shadow-lg transform -rotate-3">
                 <FileSpreadsheet className="text-white w-6 h-6" />
             </div>
             <h1 className="text-2xl font-serif font-bold tracking-tight">Travel Summary Generator</h1>
         </div>
-        <a href="https://ai.google.dev/" target="_blank" rel="noreferrer" className="text-xs font-medium text-stone-400 hover:text-stone-600 transition-colors">
-            Powered by Gemini
-        </a>
+        <div className="flex items-center gap-1 bg-slate-100 rounded-full p-1">
+          <button
+            onClick={() => setMode('travel')}
+            className="px-3 py-1.5 rounded-full text-sm font-medium bg-white text-slate-700 shadow-sm transition-all"
+          >
+            ✈️ Travel
+          </button>
+          <button
+            onClick={() => setMode('tax')}
+            className="px-3 py-1.5 rounded-full text-sm font-medium text-slate-500 hover:text-slate-700 transition-all"
+          >
+            🧾 Tax
+          </button>
+        </div>
       </header>
 
       {/* Main Content */}
