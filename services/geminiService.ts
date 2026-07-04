@@ -1,7 +1,10 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { BookletData, WeatherType } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Lazy so a missing GEMINI_API_KEY only fails when the travel app is used,
+// not at module load (this file is imported by the shared entry point).
+let ai: GoogleGenAI | null = null;
+const getAi = () => (ai ??= new GoogleGenAI({ apiKey: process.env.API_KEY }));
 
 const responseSchema: Schema = {
   type: Type.OBJECT,
@@ -112,7 +115,7 @@ export const parseItinerary = async (rawData: string): Promise<BookletData> => {
       ${rawData}
     `;
 
-    const response = await ai.models.generateContent({
+    const response = await getAi().models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: prompt,
       config: {
